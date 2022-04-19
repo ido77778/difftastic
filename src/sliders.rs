@@ -41,9 +41,7 @@ pub fn fix_all_sliders<'a>(language: guess_language::Language, nodes: &[&'a Synt
     fix_all_sliders_one_step(nodes);
     fix_all_sliders_one_step(nodes);
 
-    if !prefer_outer_delimiter(language) {
-        fix_all_nested_sliders(nodes);
-    }
+    fix_all_nested_sliders(language, nodes);
 }
 
 /// Should nester slider correction prefer the inner or outer
@@ -91,13 +89,44 @@ fn fix_all_sliders_one_step<'a>(nodes: &[&'a Syntax<'a>]) {
 ///
 /// For C-like languages, the first case matches human intuition much
 /// better. Fix the slider to make the inner delimiter novel.
-fn fix_all_nested_sliders<'a>(nodes: &[&'a Syntax<'a>]) {
+fn fix_all_nested_sliders<'a>(language: guess_language::Language, nodes: &[&'a Syntax<'a>]) {
+    let prefer_outer = prefer_outer_delimiter(language);
     for node in nodes {
-        fix_nested_slider(node);
+        if prefer_outer {
+            fix_nested_slider_prefer_outer(node);
+        } else {
+            fix_nested_slider_prefer_inner(node);
+        }
     }
 }
 
-fn fix_nested_slider<'a>(node: &'a Syntax<'a>) {
+fn fix_nested_slider_prefer_outer<'a>(node: &'a Syntax<'a>) {
+    if let List { children, .. } = node {
+        match node
+            .change()
+            .expect("Changes should be set before slider correction")
+        {
+            Unchanged(_) => {
+                // All children should be novel except one descendant.
+                let mut found_unchanged = vec![];
+                // Wrong: looking for changed list with unchanged children.
+                unchanged_descendants(children, &mut found_unchanged);
+
+                if let [List { .. }] = found_unchanged[..] {
+                    push_unchanged_to_descendant(node, found_unchanged[0]);
+                }
+            }
+            ReplacedComment(_, _) => {}
+            Novel => {
+                for child in children {
+                    fix_nested_slider_prefer_outer(child);
+                }
+            }
+        }
+    }
+}
+
+fn fix_nested_slider_prefer_inner<'a>(node: &'a Syntax<'a>) {
     if let List { children, .. } = node {
         match node
             .change()
@@ -105,15 +134,13 @@ fn fix_nested_slider<'a>(node: &'a Syntax<'a>) {
         {
             Unchanged(_) => {
                 for child in children {
-                    fix_nested_slider(child);
+                    fix_nested_slider_prefer_inner(child);
                 }
             }
             ReplacedComment(_, _) => {}
             Novel => {
                 let mut found_unchanged = vec![];
-                for child in children {
-                    unchanged_descendants(child, &mut found_unchanged);
-                }
+                unchanged_descendants(children, &mut found_unchanged);
 
                 if let [List { .. }] = found_unchanged[..] {
                     push_unchanged_to_ancestor(node, found_unchanged[0]);
@@ -123,22 +150,50 @@ fn fix_nested_slider<'a>(node: &'a Syntax<'a>) {
     }
 }
 
-fn unchanged_descendants<'a>(node: &'a Syntax<'a>, found: &mut Vec<&'a Syntax<'a>>) {
+/// Find the unchanged descendants of `nodes`.
+fn unchanged_descendants<'a>(nodes: &[&'a Syntax<'a>], found: &mut Vec<&'a Syntax<'a>>) {
+    // We're only interested if there is exactly one unchanged
+    // descendant, so return early if we find 2 or more.
     if found.len() > 1 {
         return;
     }
 
-    match node.change().unwrap() {
-        Unchanged(_) => {
-            found.push(node);
-        }
-        Novel | ReplacedComment(_, _) => {
-            if let List { children, .. } = node {
-                for child in children {
-                    unchanged_descendants(child, found);
+    for node in nodes {
+        match node.change().unwrap() {
+            Unchanged(_) => {
+                found.push(node);
+            }
+            Novel | ReplacedComment(_, _) => {
+                if let List { children, .. } = node {
+                    unchanged_descendants(children, found);
                 }
             }
         }
+    }
+}
+
+fn push_unchanged_to_descendant<'a>(root: &'a Syntax<'a>, inner: &'a Syntax<'a>) {
+    let root_change = root.change().expect("Node changes should be set");
+
+    let delimiters_match = match (root, inner) {
+        (
+            List {
+                open_content: root_open,
+                close_content: root_close,
+                ..
+            },
+            List {
+                open_content: inner_open,
+                close_content: inner_close,
+                ..
+            },
+        ) => root_open == inner_open && root_close == inner_close,
+        _ => false,
+    };
+
+    if delimiters_match {
+        root.set_change(Novel);
+        inner.set_change(root_change);
     }
 }
 
