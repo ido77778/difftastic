@@ -139,19 +139,58 @@ fn fix_nested_slider_prefer_inner<'a>(node: &'a Syntax<'a>) {
             }
             ReplacedComment(_, _) => {}
             Novel => {
-                let mut found_unchanged = vec![];
-                unchanged_descendants(children, &mut found_unchanged);
-
-                if let [List { .. }] = found_unchanged[..] {
-                    push_unchanged_to_ancestor(node, found_unchanged[0]);
+                if let Some(descendant) = unchanged_descendants(children) {
+                    push_unchanged_to_ancestor(node, descendant);
                 }
             }
         }
     }
 }
 
-/// Find the unchanged descendants of `nodes`.
-fn unchanged_descendants<'a>(nodes: &[&'a Syntax<'a>], found: &mut Vec<&'a Syntax<'a>>) {
+fn unchanged_descendants<'a>(nodes: &[&'a Syntax<'a>]) -> Option<&'a Syntax<'a>> {
+    find_exactly_one(nodes, |node| matches!(node.change(), Some(Unchanged(_))))
+}
+
+fn unchanged_descendant_with_changed_delims<'a>(
+    nodes: &[&'a Syntax<'a>],
+) -> Option<&'a Syntax<'a>> {
+    find_exactly_one(nodes, |node| matches!(node.change(), Some(Unchanged(_))))
+}
+
+fn find_exactly_one<'a, F>(nodes: &[&'a Syntax<'a>], predicate: F) -> Option<&'a Syntax<'a>>
+where
+    F: Fn(&'a Syntax<'a>) -> bool + Copy,
+{
+    let mut found = vec![];
+    find_exactly_one_(nodes, predicate, &mut found);
+
+    if let [node] = found[..] {
+        Some(node)
+    } else {
+        None
+    }
+}
+
+fn find_exactly_one_<'a, F>(nodes: &[&'a Syntax<'a>], predicate: F, found: &mut Vec<&'a Syntax<'a>>)
+where
+    F: Fn(&'a Syntax<'a>) -> bool + Copy,
+{
+    if found.len() > 1 {
+        return;
+    }
+
+    for node in nodes {
+        if predicate(node) {
+            found.push(node);
+        } else {
+            if let List { children, .. } = node {
+                find_exactly_one_(children, predicate, found);
+            }
+        }
+    }
+}
+
+fn find_single_novel_delimiters<'a>(nodes: &[&'a Syntax<'a>], found: &mut Vec<&'a Syntax<'a>>) {
     // We're only interested if there is exactly one unchanged
     // descendant, so return early if we find 2 or more.
     if found.len() > 1 {
