@@ -208,6 +208,11 @@ fn main() {
             extra_files: vec!["scanner.c"],
         },
         TreeSitterParser {
+            name: "tree-sitter-solidity",
+            src_dir: "vendor/tree-sitter-solidity-src",
+            extra_files: vec![],
+        },
+        TreeSitterParser {
             name: "tree-sitter-swift",
             src_dir: "vendor/tree-sitter-swift-src",
             extra_files: vec!["scanner.c"],
